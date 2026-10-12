@@ -56,30 +56,12 @@ function refresh(windowId) {
   });
 }
 
-/** Allow a native tab/iframe focus transfer to finish before treating blur as exit. */
-function checkFocusSoon(windowId) {
-  setTimeout(() => {
-    void enqueue(async () => {
-      if (activeWindowId !== windowId) return;
-      const [tab] = await chrome.tabs.query({ windowId, active: true });
-      const response = tab && await chrome.tabs.sendMessage(tab.id, { type: 'focus' }, { frameId: 0 }).catch(() => null);
-      // The omnibox and protected pages cannot report modifier release. Clear the
-      // session instead of leaving other tabs decorated with no way to end it.
-      if (!response?.focused) await release();
-    });
-  }, 150);
-}
-
 /** Accept only our page lifecycle and modifier observations; never handle digits. */
 chrome.runtime.onMessage.addListener((message, sender, respond) => {
-  if (!sender.tab || !['held', 'ready', 'blur'].includes(message?.type)) return;
+  if (!sender.tab || !['held', 'ready'].includes(message?.type)) return;
   void enqueue(async () => {
     if (message.type === 'ready') {
       if (activeWindowId === sender.tab.windowId) await paintWindow(activeWindowId, true);
-      return;
-    }
-    if (message.type === 'blur') {
-      checkFocusSoon(sender.tab.windowId);
       return;
     }
     const tab = await activeSender(sender);
@@ -97,11 +79,8 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
   return true;
 });
 
-/** Preserve a held modifier across native tab switching, but not into browser UI. */
-chrome.tabs.onActivated.addListener(({ windowId }) => {
-  void refresh(windowId);
-  checkFocusSoon(windowId);
-});
+/** Tab activation is not a release, even if the destination cannot observe keys. */
+chrome.tabs.onActivated.addListener(({ windowId }) => { void refresh(windowId); });
 
 // Index changes affect both the first eight digits and the special last-tab digit.
 chrome.tabs.onCreated.addListener(tab => { void refresh(tab.windowId); });
@@ -121,7 +100,6 @@ chrome.tabs.onUpdated.addListener((_tabId, change, tab) => {
   // Ignore title changes: our own prefixes must not trigger a repaint loop.
   if (change.status === 'complete') {
     void refresh(tab.windowId);
-    if (tab.active) checkFocusSoon(tab.windowId);
   }
 });
 

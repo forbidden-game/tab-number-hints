@@ -10,8 +10,10 @@
     if (disposed) return;
     disposed = true;
     title?.setHint(null);
-    window.removeEventListener('keydown', onKeyboard, true);
-    window.removeEventListener('keyup', onKeyboard, true);
+    window.removeEventListener('keydown', onInput, true);
+    window.removeEventListener('keyup', onInput, true);
+    window.removeEventListener('pointermove', onInput, true);
+    window.removeEventListener('pointerdown', onInput, true);
     window.removeEventListener('focus', onFocus, true);
     window.removeEventListener('blur', onBlur, true);
     window.removeEventListener('pagehide', onPageHide);
@@ -30,15 +32,13 @@
     }
   }
 
-  /** Track the exact native modifier, including release after switching into this tab. */
-  function onKeyboard(event) {
+  /** Read the modifier itself; switching tabs or pressing another key does not end a hold. */
+  function onInput(event) {
     if (!event.isTrusted || pageHidden || disposed) return;
-    const held = mac
-      ? event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey
-      : event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey;
-    // Explicit modifier events are authoritative even if focus transfer omitted
-    // blur/keyup in this frame; cached state must not suppress a fresh press.
-    const modifierEvent = ['Meta', 'Control', 'Alt', 'Shift'].includes(event.key);
+    const held = mac ? event.metaKey : event.ctrlKey;
+    // Pointer input reconciles a release missed in browser UI or a protected page.
+    // Explicit modifier events remain authoritative after an unobserved focus transfer.
+    const modifierEvent = event.key === (mac ? 'Meta' : 'Control');
     if (held === observedHeld && !modifierEvent) return;
     observedHeld = held;
     void send({ type: 'held', held });
@@ -50,10 +50,9 @@
     void send({ type: 'ready' });
   }
 
-  /** Background distinguishes a tab/iframe transfer from focus moving to the omnibox. */
+  /** Reset local deduplication, but never mistake a focus transfer for modifier release. */
   function onBlur() {
     observedHeld = undefined;
-    void send({ type: 'blur' });
   }
 
   /** Do not cache decorated titles when a page enters the back/forward cache. */
@@ -70,13 +69,14 @@
   }
 
   /** Only the top frame owns the tab title; all frames may observe modifier keys. */
-  chrome.runtime.onMessage.addListener((message, _sender, respond) => {
+  chrome.runtime.onMessage.addListener(message => {
     if (disposed) return;
     if (message?.type === 'hint' && !pageHidden) title?.setHint(message.hint);
-    if (message?.type === 'focus') respond({ focused: !pageHidden && document.hasFocus() });
   });
-  window.addEventListener('keydown', onKeyboard, true);
-  window.addEventListener('keyup', onKeyboard, true);
+  window.addEventListener('keydown', onInput, true);
+  window.addEventListener('keyup', onInput, true);
+  window.addEventListener('pointermove', onInput, true);
+  window.addEventListener('pointerdown', onInput, true);
   window.addEventListener('focus', onFocus, true);
   window.addEventListener('blur', onBlur, true);
   window.addEventListener('pagehide', onPageHide);
